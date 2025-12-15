@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>바른스쿼트 AI</title>
+    
+    <!-- PWA 설정 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1C1C1E">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2548/2548530.png">
+
+    <!-- 라이브러리 로드 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "San Francisco", Roboto, sans-serif;
+            background-color: #000; color: white;
+            margin: 0; padding: 0;
+            height: 100vh; width: 100vw;
+            display: flex; flex-direction: column;
+            overflow: hidden; touch-action: none;
+        }
+
+        /* 상단 헤더 */
+        .top-bar {
+            width: 100%; padding: 15px 20px;
+            background: rgba(28, 28, 30, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid #333;
+            display: flex; justify-content: space-between; align-items: center;
+            flex-shrink: 0; box-sizing: border-box; z-index: 10;
+        }
+        .app-title { font-size: 1.4rem; font-weight: 900; font-style: italic; color: #FFF; letter-spacing: -0.5px; }
+
+        .controls { display: flex; gap: 15px; align-items: center; }
+        .input-group { 
+            background: #3A3A3C; padding: 8px 16px; border-radius: 12px; 
+            font-size: 1.1rem; font-weight: 600; display: flex; align-items: center; gap: 8px;
+        }
+        .num-input { 
+            width: 50px; padding: 5px; border-radius: 6px; border: none; 
+            text-align: center; font-size: 1.2rem; font-weight: bold; background: #FFF; color: #000; 
+        }
+
+        .btn { 
+            border: none; padding: 12px 20px; border-radius: 12px; 
+            font-size: 1rem; font-weight: 700; cursor: pointer; transition: transform 0.1s;
+        }
+        .btn:active { transform: scale(0.95); }
+        .btn-blue { background: #0A84FF; color: white; }
+        .btn-red { background: #FF453A; color: white; }
+        .btn-green { background: #30D158; color: white; }
+        .btn.recording { animation: pulse 1s infinite; background: white; color: red; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+        /* 메인 레이아웃 */
+        .main-container {
+            display: flex; flex: 1; width: 100%; height: 100%; overflow: hidden;
+            background: #121212;
+        }
+
+        .cam-section {
+            flex: 2.5; position: relative;
+            background: #000; overflow: hidden;
+            display: flex; justify-content: center; align-items: center;
+        }
+        .input_video { display: none; }
+        .output_canvas { 
+            position: absolute; width: 100%; height: 100%; object-fit: contain; 
+        }
+
+        .info-section {
+            flex: 1; background: #1C1C1E;
+            padding: 20px; box-sizing: border-box;
+            display: flex; flex-direction: column; gap: 15px;
+            border-left: 1px solid #333; overflow-y: auto;
+        }
+
+        .info-card {
+            background: #2C2C2E; border-radius: 18px; padding: 20px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+
+        .counter-box {
+            border: 3px solid #0A84FF; background: #1C1C1E;
+            flex: 0 0 auto; min-height: 180px;
+        }
+        .set-display { font-size: 1.5rem; color: #AAA; font-weight: 700; margin-bottom: 5px; }
+        .rep-display { font-size: 6rem; font-weight: 900; color: #0A84FF; line-height: 1; font-family: 'Arial Black', sans-serif; }
+        .rep-label { font-size: 1rem; color: #666; font-weight: 600; margin-top: 5px; }
+
+        .sub-val { font-size: 2rem; font-weight: 800; color: #FFF; margin: 5px 0; }
+        .sub-label { font-size: 0.9rem; color: #8E8E93; font-weight: 600; }
+        .status-msg { font-size: 1.3rem; font-weight: 700; color: #0A84FF; margin-top: 5px; }
+        .warn { color: #FF453A !important; }
+
+        .gauge-container { width: 100%; height: 10px; background: #444; border-radius: 5px; margin-top: 10px; overflow: hidden; }
+        .gauge-bar { height: 100%; width: 0%; background: #FF9F0A; transition: width 0.1s linear; }
+
+        .overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); z-index: 50;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            backdrop-filter: blur(5px);
+        }
+        .overlay-text { font-size: 2rem; font-weight: bold; color: white; margin-bottom: 30px; text-align: center; line-height: 1.4; }
+        .overlay-timer { font-size: 8rem; font-weight: 900; color: #30D158; margin: 20px 0; }
+        .big-btn { 
+            padding: 20px 60px; font-size: 1.5rem; border-radius: 40px; 
+            background: #0A84FF; color: white; border: none; font-weight: 800; cursor: pointer; 
+            box-shadow: 0 10px 20px rgba(10,132,255,0.3);
+        }
+
+        .loading-track { width: 50%; height: 8px; background: #333; border-radius: 4px; margin-top: 20px; }
+        .loading-bar { width: 0%; height: 100%; background: #0A84FF; border-radius: 4px; transition: width 0.1s; }
+
+        #modal3D { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #111; z-index: 100; display: none; flex-direction: column; }
+        #canvas3D { width: 100%; height: 90%; }
+        .close-bar { height: 10%; background: #222; display: flex; align-items: center; justify-content: center; }
+
+        @media (max-width: 1024px) and (orientation: portrait) {
+            .main-container { flex-direction: column; }
+            .cam-section { flex: 1.5; width: 100%; }
+            .info-section { 
+                flex: 1; width: 100%; border-left: none; border-top: 1px solid #333;
+                flex-direction: row; flex-wrap: wrap; align-content: flex-start;
+                padding: 10px; gap: 10px;
+            }
+            .counter-box { width: 100%; min-height: 120px; flex-direction: row; justify-content: space-around; }
+            .rep-display { font-size: 4rem; }
+            .info-card:not(.counter-box) { width: 48%; }
+            .top-bar { padding: 10px; flex-wrap: wrap; gap: 10px; justify-content: center; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="top-bar">
+        <div class="app-title">⚡ 바른스쿼트 AI</div>
+        <div class="controls">
+            <div class="input-group">
+                목표 <input type="number" id="targetReps" class="num-input" value="10"> 회
+            </div>
+            <div class="input-group">
+                x <input type="number" id="targetSets" class="num-input" value="3"> 세트
+            </div>
+            <button class="btn btn-blue" onclick="toggleVoice()">🔊 음성</button>
+            <button class="btn btn-blue" onclick="resetCount()">🔄 리셋</button>
+            <button id="recBtn" class="btn btn-red" onclick="toggleRecord()">🔴 녹화</button>
+            <button id="view3dBtn" class="btn btn-green" onclick="open3D()">✨ 3D</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="cam-section">
+            <video class="input_video" playsinline></video>
+            <canvas class="output_canvas"></canvas>
+
+            <div id="calibOverlay" class="overlay">
+                <div class="overlay-text" id="calibText">체형 측정<br>정면이나 측면으로 서주세요</div>
+                <div class="loading-track"><div class="loading-bar" id="calibProgress"></div></div>
+                <button class="big-btn" style="margin-top:30px;" onclick="startCalibration()">측정 시작 (3초)</button>
+            </div>
+
+            <div id="restOverlay" class="overlay" style="display:none;">
+                <div class="overlay-text">세트 종료! 휴식하세요</div>
+                <div class="overlay-timer" id="restTimer">30</div>
+                <button class="big-btn" onclick="skipRest()">바로 시작하기</button>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <div class="info-card counter-box">
+                <div>
+                    <div class="set-display" id="setDisplay">SET 1</div>
+                    <div class="rep-label">REPS</div>
+                </div>
+                <div class="rep-display" id="repDisplay">0</div>
+            </div>
+
+            <div class="info-card">
+                <div class="sub-label">상체 기울기 (현재 / 기준)</div>
+                <div class="sub-val" id="trunkVal" style="font-size:1.4rem;">대기 중</div>
+                <div class="status-msg" id="trunkMsg">-</div>
+            </div>
+
+            <div class="info-card">
+                <div class="sub-label">무릎 깊이 (목표 45° 이상)</div>
+                <div class="sub-val" id="kneeVal">0°</div>
+                <div class="gauge-container"><div class="gauge-bar" id="kneeGauge"></div></div>
+            </div>
+
+            <div class="info-card">
+                <div class="sub-label">무릎 돌출 체크</div>
+                <div class="status-msg" id="kneeSafeMsg">안전</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal3D">
+        <div id="canvas3D"></div>
+        <div class="close-bar"><button class="btn btn-blue" onclick="close3D()">닫기</button></div>
+    </div>
+
+    <script>
+        // 서비스 워커 등록 (앱 설치 지원)
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js')
+            .then(() => console.log('Service Worker Registered'));
+        }
+
+        const ctx = document.querySelector('.output_canvas').getContext('2d');
+        const videoElement = document.querySelector('.input_video');
+        const canvasElement = document.querySelector('.output_canvas');
+
+        let baselineAngle = 0;
+        let isCalibrated = false;
+        let isCalibrating = false;
+        let calibFrames = [];
+
+        let repCount = 0;
+        let setCount = 1;
+        let isSquatting = false;
+        let isResting = false;
+
+        let repIsValid = true;
+        let maxDepth = 0; 
+
+        const MIN_DEPTH_THRESHOLD = 45; 
+        const TOO_DEEP_THRESHOLD = 85; 
+        const BACK_TOLERANCE = 25;      
+
+        let squatStartTime = 0; 
+        let isRecording = false;
+        let recordedData = [];
+        let voiceOn = false;
+        let lastSpeak = 0;
+        let restInterval = null;
+
+        function updateDisplay() {
+            document.getElementById('repDisplay').innerText = repCount;
+            document.getElementById('setDisplay').innerText = `SET ${setCount}`;
+        }
+        function resetCount() {
+            repCount = 0; setCount = 1; isResting = false;
+            updateDisplay(); speak("리셋되었습니다.", true);
+        }
+
+        function startCalibration() {
+            document.querySelector('#calibOverlay .big-btn').style.display = 'none';
+            document.querySelector('.loading-track').style.display = 'block';
+            document.getElementById('calibText').innerText = "측정 중입니다... 움직이지 마세요.";
+            isCalibrating = true; calibFrames = [];
+        }
+
+        function finishCalibration() {
+            isCalibrating = false;
+            const sum = calibFrames.reduce((a, b) => a + b, 0);
+            baselineAngle = Math.round(sum / calibFrames.length) || 0;
+            isCalibrated = true;
+            document.getElementById('calibOverlay').style.display = 'none';
+            document.getElementById('trunkVal').innerText = `- / ${baselineAngle}°`;
+            speak(`측정이 완료되었습니다. 시작해주세요!`, true);
+        }
+
+        function startRest() {
+            isResting = true;
+            let timeLeft = 30; 
+            document.getElementById('restOverlay').style.display = 'flex';
+            document.getElementById('restTimer').innerText = timeLeft;
+            speak("30초 휴식입니다.", true);
+
+            if(restInterval) clearInterval(restInterval);
+            restInterval = setInterval(() => {
+                timeLeft--;
+                document.getElementById('restTimer').innerText = timeLeft;
+                if (timeLeft === 20) speak("20초");
+                else if (timeLeft === 10) speak("10초 전입니다.");
+                else if (timeLeft <= 5 && timeLeft > 0) speak(timeLeft.toString(), true); 
+                if(timeLeft <= 0) skipRest();
+            }, 1000);
+        }
+
+        function skipRest() {
+            clearInterval(restInterval);
+            document.getElementById('restOverlay').style.display = 'none';
+            isResting = false;
+            const targetSets = parseInt(document.getElementById('targetSets').value);
+            if(setCount < targetSets) {
+                setCount++; repCount = 0; updateDisplay(); speak(`${setCount}세트 시작합니다!`, true);
+            } else {
+                speak("모든 운동이 종료되었습니다. 수고하셨습니다!", true);
+            }
+        }
+
+        function speak(text, isUrgent = false) {
+            if(!voiceOn) return;
+            try {
+                if(isUrgent) window.speechSynthesis.cancel();
+                else if(window.speechSynthesis.speaking || Date.now() - lastSpeak < 1200) return;
+                
+                const u = new SpeechSynthesisUtterance(text);
+                u.lang = 'ko-KR'; 
+                u.rate = 1.4; 
+                u.pitch = 1.0; 
+                window.speechSynthesis.speak(u);
+                lastSpeak = Date.now();
+            } catch(e) { console.error(e); }
+        }
+
+        function toggleVoice() { voiceOn = !voiceOn; speak(voiceOn ? "음성 안내를 시작합니다." : "", true); }
+        function toggleRecord() {
+            if(!isCalibrated) return alert("측정부터 해주세요!");
+            isRecording = !isRecording;
+            const btn = document.getElementById('recBtn');
+            if(isRecording) {
+                recordedData = []; btn.innerText = "⏹ 정지"; btn.classList.add('recording');
+                document.getElementById('view3dBtn').style.display = 'none';
+            } else {
+                btn.innerText = "🔴 녹화"; btn.classList.remove('recording');
+                document.getElementById('view3dBtn').style.display = 'inline-block';
+            }
+        }
+
+        function getAngle(a, b, c) { return Math.abs((Math.atan2(c.y-b.y, c.x-b.x) - Math.atan2(a.y-b.y, a.x-b.x)) * (180/Math.PI)); }
+        function getVerticalAngle(a, b) { return Math.abs(Math.atan2(a.x - b.x, b.y - a.y) * (180 / Math.PI)); }
+
+        function onResults(results) {
+            try {
+                if (canvasElement.width !== canvasElement.clientWidth || canvasElement.height !== canvasElement.clientHeight) {
+                    canvasElement.width = canvasElement.clientWidth;
+                    canvasElement.height = canvasElement.clientHeight;
+                }
+                
+                ctx.save();
+                ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+                ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+                if (results.poseLandmarks) {
+                    const lm = results.poseLandmarks;
+                    drawConnectors(ctx, lm, POSE_CONNECTIONS, {color: '#555', lineWidth: 4}); 
+                    drawLandmarks(ctx, lm, {color: '#AAA', lineWidth: 2, radius: 4}); 
+
+                    const l_vis = (lm[11].visibility + lm[23].visibility + lm[25].visibility) / 3;
+                    const r_vis = (lm[12].visibility + lm[24].visibility + lm[26].visibility) / 3;
+
+                    let mode = "FRONT"; 
+                    if (l_vis > 0.6 && r_vis > 0.6) mode = "FRONT";
+                    else if (l_vis > r_vis) mode = "SIDE_L";
+                    else mode = "SIDE_R";
+
+                    if (isCalibrating) {
+                        const isVisible = (mode === "FRONT") ? true : (mode === "SIDE_L" ? l_vis > 0.5 : r_vis > 0.5);
+                        if (isVisible) {
+                            let tAng = 0;
+                            if(mode === "SIDE_R") tAng = Math.round(getVerticalAngle(lm[12], lm[24]));
+                            else tAng = Math.round(getVerticalAngle(lm[11], lm[23]));
+
+                            calibFrames.push(tAng);
+                            const percent = Math.min(100, Math.round((calibFrames.length / 60) * 100));
+                            document.getElementById('calibProgress').style.width = percent + "%";
+                            if (calibFrames.length > 60) requestAnimationFrame(() => finishCalibration());
+                        } else {
+                            document.getElementById('calibText').innerText = "전신이 보이게 서주세요";
+                        }
+                        ctx.restore();
+                        return;
+                    }
+
+                    if (isCalibrated) {
+                        let currentTrunk = 0;
+                        let kBend = 0;
+                        let isKneeOver = false;
+
+                        if(mode === "SIDE_R") currentTrunk = Math.round(getVerticalAngle(lm[12], lm[24]));
+                        else currentTrunk = Math.round(getVerticalAngle(lm[11], lm[23]));
+
+                        document.getElementById('trunkVal').innerText = `${currentTrunk}° / ${baselineAngle}°`;
+
+                        if (mode === "FRONT") {
+                            const l_ang = getAngle(lm[23], lm[25], lm[27]);
+                            const r_ang = getAngle(lm[24], lm[26], lm[28]);
+                            kBend = Math.min(Math.round(180 - (l_ang>180?360-l_ang:l_ang)), Math.round(180 - (r_ang>180?360-r_ang:r_ang)));
+                            
+                            const l_heel = lm[29]; const l_toe = lm[31];
+                            const r_heel = lm[30]; const r_toe = lm[32];
+                            const l_knee = lm[25]; const r_knee = lm[26];
+
+                            const l_facingRight = l_toe.x > l_heel.x;
+                            let l_over = l_facingRight ? (l_knee.x > l_toe.x) : (l_knee.x < l_toe.x);
+
+                            const r_facingRight = r_toe.x > r_heel.x;
+                            let r_over = r_facingRight ? (r_knee.x > r_toe.x) : (r_knee.x < r_toe.x);
+
+                            if(l_over || r_over) isKneeOver = true;
+
+                            ctx.lineWidth = 4; ctx.strokeStyle = isKneeOver ? "#FF453A" : "#0A84FF";
+                            const l_tX = lm[31].x * canvasElement.width; const l_tY = lm[31].y * canvasElement.height;
+                            const r_tX = lm[32].x * canvasElement.width; const r_tY = lm[32].y * canvasElement.height;
+                            const l_kY = lm[25].y * canvasElement.height; const r_kY = lm[26].y * canvasElement.height;
+                            
+                            ctx.beginPath(); ctx.moveTo(l_tX, l_tY); ctx.lineTo(l_tX, l_kY - 80); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(r_tX, r_tY); ctx.lineTo(r_tX, r_kY - 80); ctx.stroke();
+
+                        } else { 
+                            const idxHip = (mode==="SIDE_L") ? 23 : 24;
+                            const idxKnee = (mode==="SIDE_L") ? 25 : 26;
+                            const idxAnk = (mode==="SIDE_L") ? 27 : 28;
+                            const idxToe = (mode==="SIDE_L") ? 31 : 32;
+                            const idxHeel = (mode==="SIDE_L") ? 29 : 30;
+                            
+                            const angRaw = getAngle(lm[idxHip], lm[idxKnee], lm[idxAnk]);
+                            kBend = Math.round(180 - (angRaw>180?360-angRaw:angRaw));
+
+                            const facingRight = lm[idxToe].x > lm[idxHeel].x;
+                            isKneeOver = facingRight ? (lm[idxKnee].x > lm[idxToe].x) : (lm[idxKnee].x < lm[idxToe].x);
+
+                            const tX = lm[idxToe].x * canvasElement.width;
+                            const tY = lm[idxToe].y * canvasElement.height;
+                            const kY = lm[idxKnee].y * canvasElement.height;
+                            ctx.lineWidth = 4;
+                            ctx.strokeStyle = isKneeOver ? "#FF453A" : "#0A84FF";
+                            ctx.beginPath(); ctx.moveTo(tX, tY); ctx.lineTo(tX, kY - 80); ctx.stroke();
+                        }
+
+                        document.getElementById('kneeVal').innerText = `${kBend}°`;
+
+                        const gauge = document.getElementById('kneeGauge');
+                        let gaugePercent = Math.min(100, (kBend / 90) * 100);
+                        gauge.style.width = gaugePercent + "%";
+                        gauge.style.backgroundColor = (kBend < 40) ? "#FF9F0A" : (kBend <= 60 ? "#30D158" : "#FF453A");
+
+                        const ksMsg = document.getElementById('kneeSafeMsg');
+                        if (isKneeOver) {
+                            ksMsg.innerText = "무릎 돌출 (위험!)"; ksMsg.classList.add('warn');
+                        } else {
+                            ksMsg.innerText = "안전"; ksMsg.classList.remove('warn');
+                        }
+
+                        const isBackBad = Math.abs(currentTrunk - baselineAngle) > BACK_TOLERANCE;
+                        const tMsg = document.getElementById('trunkMsg');
+                        if(isBackBad) {
+                            tMsg.innerText = "상체 숙임 (주의)"; tMsg.classList.add('warn');
+                        } else {
+                            tMsg.innerText = "Good"; tMsg.classList.remove('warn');
+                        }
+
+                        if (!isResting) {
+                            const targetReps = parseInt(document.getElementById('targetReps').value);
+                            const currentTime = Date.now();
+
+                            if (kBend > 40 && !isSquatting) {
+                                isSquatting = true;
+                                squatStartTime = currentTime;
+                                maxDepth = 0;
+                                repIsValid = true; 
+                            }
+
+                            if (isSquatting) {
+                                if (kBend > maxDepth) maxDepth = kBend;
+                                
+                                if (isKneeOver) { 
+                                    repIsValid = false; 
+                                    speak("무릎이 발끝을 넘었습니다.", true);
+                                }
+                                else if (isBackBad) { 
+                                    repIsValid = false; 
+                                    speak("상체를 세워주세요.", true); 
+                                }
+                                else if (kBend > TOO_DEEP_THRESHOLD) {
+                                    speak("너무 깊게 앉으셨어요.", false);
+                                }
+                                
+                                if (kBend < MIN_DEPTH_THRESHOLD && (currentTime - squatStartTime > 2000)) {
+                                    speak("조금 더 앉아주세요.", false);
+                                    squatStartTime = currentTime; 
+                                }
+                            }
+
+                            if (kBend < 20 && isSquatting) {
+                                isSquatting = false;
+
+                                if (repIsValid) {
+                                    if (maxDepth >= MIN_DEPTH_THRESHOLD) {
+                                        repCount++;
+                                        updateDisplay();
+                                        speak(repCount.toString() + "회.", true);
+                                        if (repCount >= targetReps) startRest();
+                                    } else {
+                                        speak("더 깊이 앉아주세요.", true);
+                                    }
+                                } else {
+                                    speak("자세를 바르게 해주세요.", true);
+                                }
+                            }
+                        }
+
+                        if(isRecording && results.poseWorldLandmarks) recordedData.push(results.poseWorldLandmarks);
+                    }
+                }
+                ctx.restore();
+
+            } catch (error) {
+                console.error(error);
+                ctx.restore();
+            }
+        }
+
+        let scene, camera, renderer, lines=[], BONES = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28]];
+        function init3D() {
+            const c = document.getElementById('canvas3D'); c.innerHTML='';
+            scene = new THREE.Scene(); scene.background = new THREE.Color(0x111111);
+            camera = new THREE.PerspectiveCamera(50, c.clientWidth/c.clientHeight, 0.1, 100); camera.position.set(0,1,4);
+            renderer = new THREE.WebGLRenderer({antialias:true}); renderer.setSize(c.clientWidth, c.clientHeight); c.appendChild(renderer.domElement);
+            new THREE.OrbitControls(camera, renderer.domElement);
+            scene.add(new THREE.AmbientLight(0x666)); const dl=new THREE.DirectionalLight(0xffffff,1); dl.position.set(2,5,5); scene.add(dl); scene.add(new THREE.GridHelper(10,10,0x444,0x222));
+            lines=[]; const mat=new THREE.LineBasicMaterial({color:0x0A84FF, linewidth:3});
+            BONES.forEach(()=>{ const g=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]); const l=new THREE.Line(g,mat); scene.add(l); lines.push(l); });
+        }
+        function play3D() {
+            if(!recordedData.length) return; let f=0;
+            function ani(){ if(document.getElementById('modal3D').style.display==='none')return; requestAnimationFrame(ani);
+                const lm=recordedData[f]; if(lm){ BONES.forEach((p,i)=>{ const a=lm[p[0]],b=lm[p[1]]; if(a&&b) lines[i].geometry.setFromPoints([new THREE.Vector3(a.x,-a.y,-a.z),new THREE.Vector3(b.x,-b.y,-b.z)]); }); }
+                f=(f+1)%recordedData.length; renderer.render(scene,camera);
+            } ani();
+        }
+        function open3D() { if(!recordedData.length) return alert("데이터 없음"); document.getElementById('modal3D').style.display='flex'; init3D(); play3D(); }
+        function close3D() { document.getElementById('modal3D').style.display='none'; }
+
+        const pose = new Pose({locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`});
+        pose.setOptions({modelComplexity: 1, smoothLandmarks: true}); pose.onResults(onResults);
+        new Camera(videoElement, {onFrame: async()=>{await pose.send({image:videoElement})}, width:1280, height:720}).start();
+    </script>
+</body>
+</html>
